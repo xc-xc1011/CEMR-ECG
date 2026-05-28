@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local data and derived experiment outputs
+data/raw/
+data/processed/
+results/
+figures/
+figure_source_data/
+*.npz
+*.npy
+
+# Large regenerated figure formats and local previews
+*.tif
+*.tiff
+
+# Logs, caches, and temporary files
+logs/
+*.log
+*.tmp
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# LaTeX/build artifacts should not be part of the code-only release
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
