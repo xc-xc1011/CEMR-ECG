@@ -177,6 +177,25 @@ def extract_mit_records(record_ids):
     )
 
 
+def squared_distance_to_protos(B, proto):
+    """Mean squared distance from each row of B to each prototype.
+
+    Equivalent to ``((B[:, None, :] - proto[None, :, :]) ** 2).mean(axis=2)``
+    but computed through the expansion
+    ``||a - b||^2 = ||a||^2 + ||b||^2 - 2 a.b`` so that no
+    ``(n_beats, n_protos, n_samples)`` temporary is ever materialised. The
+    broadcast form needs several hundred megabytes per call on the full
+    MIT-BIH training pool and exhausted memory on this machine.
+    """
+    B = np.asarray(B, dtype=np.float32)
+    proto = np.asarray(proto, dtype=np.float32)
+    b_sq = np.einsum("ij,ij->i", B, B)[:, None]
+    p_sq = np.einsum("ij,ij->i", proto, proto)[None, :]
+    dist = b_sq + p_sq - 2.0 * (B @ proto.T)
+    # The expansion can produce small negative values through cancellation.
+    return np.maximum(dist, 0.0, out=dist) / float(B.shape[1])
+
+
 def add_proto_features(X_tr_base, y_tr, X_te_base, B0_tr, B1_tr, B0_te, B1_te):
     proto0 = []
     proto1 = []
@@ -194,8 +213,8 @@ def add_proto_features(X_tr_base, y_tr, X_te_base, B0_tr, B1_tr, B0_te, B1_te):
         P1n = proto1 / (np.linalg.norm(proto1, axis=1, keepdims=True) + 1e-8)
         corr0 = B0n @ P0n.T
         corr1 = B1n @ P1n.T
-        d0 = ((B0[:, None, :] - proto0[None, :, :]) ** 2).mean(axis=2)
-        d1 = ((B1[:, None, :] - proto1[None, :, :]) ** 2).mean(axis=2)
+        d0 = squared_distance_to_protos(B0, proto0)
+        d1 = squared_distance_to_protos(B1, proto1)
         margins = np.stack([
             corr0[:, S_CLASS] - corr0[:, N_CLASS],
             corr0[:, F_CLASS] - corr0[:, N_CLASS],

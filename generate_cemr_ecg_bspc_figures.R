@@ -320,7 +320,7 @@ p1a <- ggplot() +
     lineheight = 0.94
   ) +
   coord_cartesian(xlim = c(0, 8.6), ylim = c(0.20, 1.55), clip = "off") +
-  labs(title = "Classifier-agnostic CEMR-ECG evidence flow") +
+  labs(title = "Reusable CEMR-ECG evidence flow") +
   theme_void(base_family = "Arial") +
   theme(plot.title = element_text(size = 9, face = "bold", hjust = 0.02))
 
@@ -566,7 +566,7 @@ fig2 <- (p2a | p2b) / p2c +
   plot_layout(heights = c(1, 0.82), widths = c(0.85, 1.35), guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(size = 8, face = "bold"))
-save_pub_r(fig2, "fig2_dataset_clinical_motivation", width_mm = 183, height_mm = 128)
+save_pub_r(fig2, "fig2_dataset_support_context", width_mm = 183, height_mm = 128)
 
 # Fig. 3 -----------------------------------------------------------------------
 gain_df <- multi_summary |>
@@ -661,7 +661,7 @@ class_mech <- purrr::map_dfr(c("F1", "Se", "Pr"), function(metric) {
   })
 }) |>
   mutate(delta = cemr - raw)
-write_source(class_mech, "fig4_classwise_mechanism")
+write_source(class_mech, "fig4_classwise_pattern")
 
 p4a <- ggplot(class_mech |> filter(metric == "F1"), aes(class, raw, xend = class, yend = cemr)) +
   geom_segment(linewidth = 0.55, colour = pc("neutral_mid")) +
@@ -692,7 +692,7 @@ fig4 <- (p4a / p4b / p4c) +
   plot_layout(heights = c(0.95, 0.85, 1.0), guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(size = 8, face = "bold"))
-save_pub_r(fig4, "fig4_classwise_mechanism", width_mm = 183, height_mm = 165)
+save_pub_r(fig4, "fig4_classwise_pattern", width_mm = 183, height_mm = 165)
 
 # Fig. 5 -----------------------------------------------------------------------
 decoder_label_map <- c(
@@ -811,7 +811,7 @@ fig5 <- (p5a | p5b) / (p5c | (p5d / p5e)) +
   plot_layout(heights = c(0.95, 1.20), widths = c(1.08, 0.92), guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(size = 8, face = "bold"), legend.position = "bottom")
-save_pub_r(fig5, "fig5_bioadaptive_decoder_mechanism", width_mm = 183, height_mm = 175)
+save_pub_r(fig5, "fig5_bioadaptive_decoder_behavior", width_mm = 183, height_mm = 175)
 
 # Fig. 6 -----------------------------------------------------------------------
 stage_df <- bio_detail |>
@@ -850,7 +850,7 @@ p6a <- ggplot(stage_df, aes(stage_label, macro_f1_4_pct, fill = stage_label)) +
   geom_point(position = position_jitter(width = 0.07), size = 0.8, alpha = 0.65) +
   facet_wrap(~ dataset, nrow = 1) +
   scale_fill_manual(values = c("Raw" = "#B4C0E4", "Encoder" = "#33B5A5", "Full" = "#0F4D92"), guide = "none") +
-  labs(x = NULL, y = "M-F1(4), %", title = "Mechanistic stage ablation") +
+  labs(x = NULL, y = "M-F1(4), %", title = "Stage and component ablation") +
   theme(axis.text.x = element_text(angle = 15, hjust = 1))
 
 p6b <- ggplot(tradeoff_stage |> filter(class %in% c("S", "F")), aes(Pr, Se, colour = stage_label, shape = class)) +
@@ -889,7 +889,7 @@ fig6 <- (p6a / p6b) / (p6c / p6d) +
   plot_layout(heights = c(1.0, 1.0, 1.05), guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(plot.tag = element_text(size = 8, face = "bold"), legend.position = "bottom")
-save_pub_r(fig6, "fig6_mechanistic_ablation", width_mm = 183, height_mm = 210)
+save_pub_r(fig6, "fig6_stage_component_ablation", width_mm = 183, height_mm = 210)
 
 # Fig. 7 -----------------------------------------------------------------------
 best_raw <- multi_summary |>
@@ -1048,11 +1048,11 @@ manifest <- tibble(
   file_stem = c(
     "fig_graphical_abstract",
     "fig1_cemr_ecg_framework",
-    "fig2_dataset_clinical_motivation",
+    "fig2_dataset_support_context",
     "fig3_20method_framework_gains",
-    "fig4_classwise_mechanism",
-    "fig5_bioadaptive_decoder_mechanism",
-    "fig6_mechanistic_ablation",
+    "fig4_classwise_pattern",
+    "fig5_bioadaptive_decoder_behavior",
+    "fig6_stage_component_ablation",
     "fig7_confusion_error_anatomy",
     "fig8_stability_practicality",
     "fig9_outlier_robustness"
@@ -1062,9 +1062,9 @@ manifest <- tibble(
     "CEMR-ECG evidence flow and interpretable module map",
     "Dataset imbalance and minority-class motivation",
     "Full 20-method framework gains across families and datasets",
-    "Class-wise mechanism of minority recovery",
+    "Class-wise pattern of minority recovery",
     "BioAdaptive decoder priors, multipliers and validation behaviour",
-    "Mechanistic stage ablation and error pathways",
+    "Stage and component ablation and error pathways",
     "Confusion matrices and S/F to N error anatomy",
     "Seed stability and practical runtime",
     "IQR outlier-removal robustness check"

@@ -183,8 +183,8 @@ def graphical_abstract():
     ax.axis("off")
 
     add_label(ax, 0.04, 0.86, "CEMR-ECG", size=13, weight="bold", ha="left", color=COL["blue"])
-    add_label(ax, 0.04, 0.68, "Classifier-agnostic evidence framework", size=7.6, ha="left", color=COL["ink"])
-    add_label(ax, 0.04, 0.59, "for imbalanced heartbeat classification", size=7.6, ha="left", color=COL["ink"])
+    add_label(ax, 0.04, 0.68, "Reusable evidence framework", size=7.6, ha="left", color=COL["ink"])
+    add_label(ax, 0.04, 0.59, "under a defined probability interface", size=7.6, ha="left", color=COL["ink"])
 
     rounded_box(ax, 0.045, 0.30, 0.15, 0.20, "ECG beat", COL["beat"], ec="#7FA7D9", size=7, weight="bold")
     draw_ecg_trace(ax, 0.065, 0.325, 0.11, 0.055)
@@ -249,7 +249,7 @@ def write_sources():
             {"figure": "graphical_abstract", "step": "Evidence encoder", "role": "encoder"},
             {"figure": "graphical_abstract", "step": "BioAdaptive decoder", "role": "decoder"},
             {"figure": "graphical_abstract", "step": "AAMI output", "role": "output"},
-            {"figure": "graphical_abstract", "step": "20 backbones x 3 datasets x 5 seeds", "role": "evaluation"},
+            {"figure": "graphical_abstract", "step": "defined probability interface", "role": "scope"},
         ]
     )
     nodes.to_csv(SOURCE_DIR / "fig1_python_framework_source_data.csv", index=False)

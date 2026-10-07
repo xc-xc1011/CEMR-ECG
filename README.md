@@ -1,8 +1,14 @@
 # CEMR-ECG
 
-Reproducibility code for **CEMR-ECG**, a classifier-agnostic morphology-rhythm evidence framework for imbalanced ECG heartbeat classification.
+Reproducibility code for **CEMR-ECG**, a reusable morphology-rhythm evidence framework for imbalanced ECG heartbeat classification under a defined backbone probability interface.
 
-CEMR-ECG builds named ECG evidence from each heartbeat, including morphology, RR-rhythm, lead-aware waveform, derivative and class-prototype descriptors. The evidence is encoded once, combined with each backbone probability interface, and passed through a bounded BioAdaptive decoder selected from training/validation information.
+CEMR-ECG builds named ECG evidence from each heartbeat, including morphology, RR rhythm, lead-aware waveform, derivative and class-prototype descriptors. The evidence is encoded once, combined with each backbone probability interface, and passed through a bounded BioAdaptive decoder selected from training/validation information.
+
+## Validation protocol
+
+All partitions are drawn at the **record level**. Every beat from a record belongs to exactly one of the fitting, internal-validation or test sets, so no record is shared between fitting and validation. The original submission used a class-stratified 15% beat-level validation split; that routine is retained in the code only for the labelled sensitivity analysis and is not the protocol behind the reported results.
+
+Use `--val-protocol record` for the reported evaluation, or `--val-protocol beat` (the script default) to reproduce the archived beat-level sensitivity analysis.
 
 ## Repository Layout
 
@@ -18,6 +24,9 @@ CEMR-ECG builds named ECG evidence from each heartbeat, including morphology, RR
 |-- run_external_raw_baselines.py
 |-- run_cemr_bio_evidence_core.py
 |-- run_cemr_bio_adaptive_decoder.py
+|-- record_aware_split.py
+|-- run_hierarchical_statistics.py
+|-- generate_calibration_curves.py
 |-- build_outlier_removed_cemr_summary.py
 |-- generate_cemr_ecg_bspc_figures.R
 |-- generate_cemr_ecg_python_schematics.py
@@ -97,22 +106,34 @@ python run_datasetwise_multimethod_permethod_bioadaptive_framework.py ^
 Run the machine-learning family:
 
 ```bash
-python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --families ml
+python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --families ml --val-protocol record
 ```
 
 Run the deep/time-series family:
 
 ```bash
-python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --families deep
+python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --families deep --val-protocol record
 ```
 
 Run all configured methods:
 
 ```bash
-python run_datasetwise_multimethod_permethod_bioadaptive_framework.py
+python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --val-protocol record
 ```
 
 The main runner writes dataset-method detail tables, summary tables, confusion matrices and reports under `results/`.
+
+The record-level split audit (zero fitting/validation/test record overlap per dataset--seed) is written with:
+
+```bash
+python run_datasetwise_multimethod_permethod_bioadaptive_framework.py --val-protocol record --write-split-audit
+```
+
+The dependence-aware mixed-model summary of the paired M-F1(4) gain is written with:
+
+```bash
+python run_hierarchical_statistics.py
+```
 
 ## Representative Diagnostics
 
@@ -165,4 +186,3 @@ Xu C. CEMR-ECG: a reusable morphology-rhythm evidence framework for imbalanced E
 ## License
 
 Code is released under the MIT License. The PhysioNet datasets used by the experiments remain governed by their original database licenses.
-

@@ -15,6 +15,7 @@ from sklearn.metrics import confusion_matrix
 import config
 from feature_engineering import add_proto_features
 from metrics_eval import metrics_row
+from record_aware_split import record_aware_train_val_split, split_audit
 from run_cemr_bio_adaptive_decoder import decoder_candidates, predict_with_decoder
 from run_cemr_bio_evidence_core import class_weight_value, counts_dict
 from run_datasetwise_cemr_framework_experiments import (
@@ -34,11 +35,52 @@ from run_external_raw_baselines import specs as ml_specs
 warnings.filterwarnings("ignore")
 
 RESULTS = Path("results")
-DETAIL = RESULTS / "datasetwise_multimethod_permethod_bioadaptive_detail.csv"
-SUMMARY = RESULTS / "datasetwise_multimethod_permethod_bioadaptive_summary.csv"
-REPORT = RESULTS / "datasetwise_multimethod_permethod_bioadaptive_report.md"
-CONFUSION = RESULTS / "datasetwise_multimethod_permethod_bioadaptive_confusion.json"
-EVIDENCE_CACHE = RESULTS / "datasetwise_multimethod_permethod_evidence_cache"
+
+# Internal validation protocol.
+#   "beat"   -> original submission: class-stratified beat sampling, which lets
+#               beats from one record appear in both the fitting and validation
+#               sets (record overlap > 0).
+#   "record" -> record-level holdout: no record is shared between fitting,
+#               validation and test, so alpha and the decoder policy are
+#               selected without subject-level leakage.
+# Set by --val-protocol in main(); the default preserves prior behaviour.
+VAL_PROTOCOL = "beat"
+
+# Output stems are suffixed per protocol so both result sets can coexist.
+_STEM = "datasetwise_multimethod_permethod_bioadaptive"
+_STEM_RECORD = f"{_STEM}_valrec"
+
+
+def output_paths() -> dict[str, Path]:
+    """Return the result paths for the active validation protocol."""
+    stem = _STEM_RECORD if VAL_PROTOCOL == "record" else _STEM
+    if RUN_TAG:
+        stem = f"{stem}_{RUN_TAG}"
+    return {
+        "detail": RESULTS / f"{stem}_detail.csv",
+        "summary": RESULTS / f"{stem}_summary.csv",
+        "report": RESULTS / f"{stem}_report.md",
+        "confusion": RESULTS / f"{stem}_confusion.json",
+        "evidence_cache": RESULTS / f"{stem}_evidence_cache",
+        "split_audit": RESULTS / f"{stem}_split_audit.csv",
+    }
+
+
+# Resolved once in run() from VAL_PROTOCOL; see output_paths().
+PATHS: dict[str, Path] = {}
+
+# Optional suffix used to give concurrent runs (for example one process per
+# dataset) their own result files and evidence cache.
+RUN_TAG = ""
+
+
+def set_val_protocol(protocol: str, run_tag: str = "") -> None:
+    """Activate a validation protocol and resolve its output paths."""
+    global VAL_PROTOCOL, RUN_TAG
+    VAL_PROTOCOL = protocol
+    RUN_TAG = run_tag or ""
+    PATHS.update(output_paths())
+
 
 DATASETS = ["MIT-BIH", "INCART", "SVDB"]
 SEEDS = [303, 1303, 2303, 3303, 4303]
@@ -153,21 +195,52 @@ def fit_encoder_predict(x_fit, y_fit, x_target, seed):
     return proba, train_time, predict_time
 
 
+def make_fit_val_split(scenario, seed):
+    """Build the fitting/validation indices under the active validation protocol.
+
+    ``beat``   reproduces the original beat-level stratified sampling, which
+               permits records to be shared between fitting and validation.
+    ``record`` holds out whole records from the training pool so that fitting
+               and validation never share a subject.
+    """
+    if VAL_PROTOCOL == "record":
+        return record_aware_train_val_split(scenario["y_tr"], scenario["pid_tr"], seed)
+    return train_val_split(scenario["y_tr"], seed)
+
+
 def load_or_build_evidence(data, dataset, seed, force=False):
-    EVIDENCE_CACHE.mkdir(parents=True, exist_ok=True)
-    cache_path = EVIDENCE_CACHE / f"{dataset}_{int(seed)}_evidence.npz"
-    meta_path = EVIDENCE_CACHE / f"{dataset}_{int(seed)}_evidence_meta.json"
+    evidence_cache = PATHS["evidence_cache"]
+    evidence_cache.mkdir(parents=True, exist_ok=True)
+    cache_path = evidence_cache / f"{dataset}_{int(seed)}_evidence.npz"
+    meta_path = evidence_cache / f"{dataset}_{int(seed)}_evidence_meta.json"
     scenario = make_scenario(data, dataset, seed)
-    train_idx, val_idx = train_val_split(scenario["y_tr"], seed)
-    if cache_path.exists() and meta_path.exists() and not force:
-        cached = np.load(cache_path, allow_pickle=True)
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    train_idx, val_idx = make_fit_val_split(scenario, seed)
+
+    # The evidence encoder depends only on (dataset, seed) under a given
+    # protocol, so a run-tagged job may read the untagged cache instead of
+    # refitting 700 trees twice per seed. Writes always go to this run's own
+    # directory, so a concurrent untagged job is never disturbed.
+    read_path, read_meta = cache_path, meta_path
+    if not read_path.exists() and RUN_TAG and VAL_PROTOCOL == "record":
+        shared_cache = RESULTS / f"{_STEM_RECORD}_evidence_cache"
+        candidate_npz = shared_cache / f"{dataset}_{int(seed)}_evidence.npz"
+        candidate_meta = shared_cache / f"{dataset}_{int(seed)}_evidence_meta.json"
+        if candidate_npz.exists() and candidate_meta.exists():
+            print(
+                f"Reusing shared evidence cache {candidate_npz.name} for tag '{RUN_TAG}'",
+                flush=True,
+            )
+            read_path, read_meta = candidate_npz, candidate_meta
+
+    if read_path.exists() and read_meta.exists() and not force:
+        cached = np.load(read_path, allow_pickle=True)
+        meta = json.loads(read_meta.read_text(encoding="utf-8"))
         return scenario, train_idx, val_idx, {
             "p_evidence_val": cached["p_evidence_val"].astype(np.float64),
             "p_evidence_test": cached["p_evidence_test"].astype(np.float64),
             "evidence_train_time": float(meta.get("evidence_train_time", 0.0)),
             "evidence_predict_time": float(meta.get("evidence_predict_time", 0.0)),
-            "cache_path": str(cache_path),
+            "cache_path": str(read_path),
         }
 
     y_fit = scenario["y_tr"][train_idx]
@@ -369,26 +442,30 @@ def run_one(data, dataset, method_spec, family_kind, seed, device, smoke=False, 
 
 
 def completed_keys():
-    if not DETAIL.exists():
+    detail = PATHS["detail"]
+    if not detail.exists():
         return set()
-    df = pd.read_csv(DETAIL)
+    df = pd.read_csv(detail)
     return set(zip(df["dataset"].astype(str), df["family"].astype(str), df["method"].astype(str), df["seed"].astype(int)))
 
 
 def load_confusion():
-    if CONFUSION.exists():
-        return json.loads(CONFUSION.read_text(encoding="utf-8"))
+    confusion = PATHS["confusion"]
+    if confusion.exists():
+        return json.loads(confusion.read_text(encoding="utf-8"))
     return {}
 
 
 def append_detail(row):
-    pd.DataFrame([row]).to_csv(DETAIL, mode="a", header=not DETAIL.exists(), index=False, encoding="utf-8")
+    detail = PATHS["detail"]
+    pd.DataFrame([row]).to_csv(detail, mode="a", header=not detail.exists(), index=False, encoding="utf-8")
 
 
 def summarize():
-    if not DETAIL.exists():
+    detail_path = PATHS["detail"]
+    if not detail_path.exists():
         return pd.DataFrame()
-    detail = pd.read_csv(DETAIL)
+    detail = pd.read_csv(detail_path)
     metrics = [
         *METRIC_COLUMNS,
         *[f"raw_{m}" for m in METRIC_COLUMNS],
@@ -426,7 +503,7 @@ def summarize():
         ["dataset", "macro_f1_4_mean", "delta_macro_f1_4_mean", "accuracy_mean"],
         ascending=[True, False, False, False],
     )
-    summary.to_csv(SUMMARY, index=False, encoding="utf-8")
+    summary.to_csv(PATHS["summary"], index=False, encoding="utf-8")
     return summary
 
 
@@ -462,7 +539,7 @@ def write_report():
                     f"{fmt_pct(r['raw_F1_F_mean'])} | {fmt_pct(r['F1_F_mean'])} |"
                 )
             lines.append("")
-    REPORT.write_text("\n".join(lines), encoding="utf-8")
+    PATHS["report"].write_text("\n".join(lines), encoding="utf-8")
 
 
 def method_allowed(name, wanted):
@@ -471,8 +548,12 @@ def method_allowed(name, wanted):
 
 def run(args):
     RESULTS.mkdir(exist_ok=True)
+    set_val_protocol(args.val_protocol, getattr(args, "run_tag", ""))
+    print(f"Validation protocol: {VAL_PROTOCOL}", flush=True)
+    print(f"Outputs: {PATHS['summary'].name}", flush=True)
     if args.force:
-        for path in [DETAIL, SUMMARY, REPORT, CONFUSION]:
+        for key in ["detail", "summary", "report", "confusion"]:
+            path = PATHS[key]
             if path.exists():
                 path.unlink()
 
@@ -527,7 +608,7 @@ def run(args):
             append_detail(row)
             conf[f"{dataset}|{row['family']}|{method_name}|{seed}|raw"] = cm_raw
             conf[f"{dataset}|{row['family']}|{method_name}|{seed}|CEMR-BioAdaptive"] = cm_cemr
-            CONFUSION.write_text(json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8")
+            PATHS["confusion"].write_text(json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8")
             done.add(key)
             write_report()
             print(
@@ -537,9 +618,42 @@ def run(args):
                 flush=True,
             )
     write_report()
-    print(f"Saved {DETAIL}", flush=True)
-    print(f"Saved {SUMMARY}", flush=True)
-    print(f"Saved {REPORT}", flush=True)
+    print(f"Saved {PATHS['detail']}", flush=True)
+    print(f"Saved {PATHS['summary']}", flush=True)
+    print(f"Saved {PATHS['report']}", flush=True)
+
+
+def write_split_audit(args):
+    """Record the fitting/validation/test record overlap for every dataset-seed pair."""
+    set_val_protocol(args.val_protocol, getattr(args, "run_tag", ""))
+
+    data = load_cache()
+    rows = []
+    for dataset in args.datasets:
+        for seed in args.seeds:
+            scenario = make_scenario(data, dataset, int(seed))
+            fit_idx, val_idx = make_fit_val_split(scenario, int(seed))
+            row = split_audit(
+                scenario["y_tr"],
+                scenario["pid_tr"],
+                fit_idx,
+                val_idx,
+                dataset,
+                int(seed),
+                test_pid=scenario["pid_te"],
+            )
+            row["val_protocol"] = VAL_PROTOCOL
+            rows.append(row)
+            print(
+                f"{dataset:<8} seed={seed:<5} fit={row['fit_size']:>6} val={row['val_size']:>5} "
+                f"valF={row['val_counts']['F']:>3} fit_val_overlap={row['fit_val_record_overlap']} "
+                f"fit_test_overlap={row.get('fit_test_record_overlap')} | {row['audit_interpretation']}",
+                flush=True,
+            )
+
+    out = PATHS["split_audit"]
+    pd.DataFrame(rows).to_csv(out, index=False, encoding="utf-8")
+    print(f"\nSaved {out}", flush=True)
 
 
 def main(argv=None):
@@ -551,11 +665,34 @@ def main(argv=None):
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--force-evidence", action="store_true", help="Rebuild cached CEMR evidence probabilities.")
+    parser.add_argument(
+        "--val-protocol",
+        choices=["beat", "record"],
+        default="beat",
+        help="Internal validation splitting. 'record' removes subject-level leakage "
+        "between the fitting and validation sets.",
+    )
+    parser.add_argument(
+        "--run-tag",
+        default="",
+        help="Suffix for result files and the evidence cache, so concurrent "
+        "runs (for example one per dataset) do not overwrite each other.",
+    )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--rebuild-report", action="store_true")
+    parser.add_argument(
+        "--write-split-audit",
+        action="store_true",
+        help="Write the fitting/validation/test record-overlap audit and exit.",
+    )
     args = parser.parse_args(argv)
     if args.rebuild_report:
+        # write_report() needs PATHS resolved for the requested protocol.
+        set_val_protocol(args.val_protocol, getattr(args, "run_tag", ""))
         write_report()
+        return
+    if args.write_split_audit:
+        write_split_audit(args)
         return
     run(args)
 
